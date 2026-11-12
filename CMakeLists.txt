@@ -27,11 +27,12 @@ add_subdirectory("${STREAM_LLM_GGML_DIR}" "${CMAKE_BINARY_DIR}/ggml" EXCLUDE_FRO
 add_library(stream_llm_runtime STATIC
     src/buffer_pool.cpp
     src/gguf_index.cpp
+    src/qwen_layer.cpp
     src/tensor_reader.cpp
 )
 target_include_directories(stream_llm_runtime PUBLIC include)
 target_compile_features(stream_llm_runtime PUBLIC cxx_std_20)
-target_link_libraries(stream_llm_runtime PRIVATE ggml-base)
+target_link_libraries(stream_llm_runtime PUBLIC ggml)
 
 add_executable(stream-llm src/main.cpp)
 target_link_libraries(stream-llm PRIVATE stream_llm_runtime)
@@ -53,7 +54,7 @@ if(BUILD_TESTING)
     set_tests_properties(cli.runs PROPERTIES PASS_REGULAR_EXPRESSION "stream-llm")
 
     add_executable(runtime-tests tests/runtime_tests.cpp)
-    target_link_libraries(runtime-tests PRIVATE stream_llm_runtime ggml-base)
+    target_link_libraries(runtime-tests PRIVATE stream_llm_runtime)
     stream_llm_enable_warnings(runtime-tests)
     add_test(NAME runtime.interfaces COMMAND runtime-tests)
 

@@ -1,7 +1,10 @@
 #include "stream_llm/buffer_pool.hpp"
 #include "stream_llm/gguf_index.hpp"
+#include "stream_llm/qwen_layer.hpp"
 #include "stream_llm/tensor_reader.hpp"
 
+#include "ggml-backend.h"
+#include "ggml-cpu.h"
 #include "ggml.h"
 #include "gguf.h"
 
@@ -69,6 +72,57 @@ private:
     std::filesystem::path path_;
 };
 
+constexpr std::array<const char *, 12> qwen_tensor_roles{
+    "attn_norm.weight", "attn_q.weight", "attn_q.bias", "attn_k.weight",
+    "attn_k.bias", "attn_v.weight", "attn_v.bias", "attn_output.weight",
+    "ffn_norm.weight", "ffn_gate.weight", "ffn_up.weight", "ffn_down.weight",
+};
+
+class QwenFixtureFile {
+public:
+    QwenFixtureFile() : path_(std::filesystem::temp_directory_path() /
+                              ("stream-llm-qwen-layer-" + std::to_string(::getpid()) + ".gguf")) {
+        gguf_context * gguf = gguf_init_empty();
+        if (!gguf) throw std::runtime_error("failed to create Qwen GGUF fixture context");
+        ggml_context * tensors = ggml_init({64 * 1024, nullptr, false});
+        if (!tensors) {
+            gguf_free(gguf);
+            throw std::runtime_error("failed to create Qwen tensor fixture context");
+        }
+
+        gguf_set_val_str(gguf, "general.architecture", "qwen2");
+        gguf_set_val_u32(gguf, "qwen2.block_count", 1);
+        for (std::size_t i = 0; i < qwen_tensor_roles.size(); ++i) {
+            auto * tensor = ggml_new_tensor_2d(tensors, GGML_TYPE_F32, 2, 2);
+            const std::string name = "blk.0." + std::string{qwen_tensor_roles[i]};
+            ggml_set_name(tensor, name.c_str());
+            std::array<float, 4> values{};
+            values.fill(static_cast<float>(i + 1));
+            std::memcpy(tensor->data, values.data(), sizeof(values));
+            gguf_add_tensor(gguf, tensor);
+        }
+        const bool written = gguf_write_to_file(gguf, path_.c_str(), false);
+        ggml_free(tensors);
+        gguf_free(gguf);
+        if (!written) throw std::runtime_error("failed to write Qwen GGUF fixture");
+    }
+
+    ~QwenFixtureFile() {
+        std::error_code error;
+        std::filesystem::remove(path_, error);
+    }
+
+    const std::filesystem::path & path() const { return path_; }
+
+private:
+    std::filesystem::path path_;
+};
+
+struct BackendDel {
+    void operator()(ggml_backend * backend) const { ggml_backend_free(backend); }
+};
+using BackendPtr = std::unique_ptr<ggml_backend, BackendDel>;
+
 void test_buffer_pool() {
     stream_llm::BufferLease survivor;
     {
@@ -117,17 +171,61 @@ void test_gguf_and_storage() {
     check_throws([&] { reader.read_at(reader.size(), byte); }, "out-of-bounds read did not fail");
 }
 
+void test_layer_streaming() {
+    QwenFixtureFile fixture;
+    stream_llm::GgufIndex index{fixture.path()};
+    stream_llm::TensorReader reader{fixture.path()};
+    BackendPtr backend{ggml_backend_cpu_init()};
+    check(backend != nullptr, "failed to initialize test CPU backend");
+    const auto alignment = ggml_backend_get_alignment(backend.get());
+    stream_llm::BufferPool pool{4096, 2048, alignment};
+    stream_llm::QwenLayerStreamer streamer{index, reader, pool, backend.get()};
+    const auto layout = streamer.map(0);
+    check(layout.tensors().size() == qwen_tensor_roles.size(), "Qwen tensor map is incomplete");
+    check(layout.size() <= pool.buffer_capacity(), "fixture layer exceeds test buffer");
+    check_throws([&] { static_cast<void>(streamer.map(1)); }, "out-of-range layer did not fail");
+
+    {
+        auto layer = streamer.load(layout);
+        check(pool.available() == 1, "bound layer did not retain its lease");
+        check(layer.layer() == 0 && layer.weight_bytes() == layout.size(), "bound layer metadata mismatch");
+        std::array<float, 4> values{};
+        ggml_backend_tensor_get(layer.tensor("attn_q.weight"), values.data(), 0, sizeof(values));
+        check(values[0] == 2.0F && values[3] == 2.0F, "bound layer tensor data mismatch");
+        check_throws([&] { static_cast<void>(layer.tensor("missing")); }, "missing bound tensor did not fail");
+        layer.synchronize();
+    }
+    check(pool.available() == 2, "layer lease was not returned after synchronization and destruction");
+
+    stream_llm::BufferPool small_pool{64, 64, alignment};
+    stream_llm::QwenLayerStreamer small_streamer{index, reader, small_pool, backend.get()};
+    check_throws([&] { static_cast<void>(small_streamer.load(layout)); },
+                 "undersized layer buffer did not fail");
+}
+
 void test_reference_model(const std::filesystem::path & path) {
     stream_llm::GgufIndex index{path};
     check(index.string("general.architecture") == "qwen2", "reference architecture mismatch");
     check(index.u32("qwen2.block_count") == 36, "reference layer count mismatch");
-    const auto & tensor = index.tensor("blk.0.attn_k.weight");
-    check(tensor.size > 0, "reference tensor is empty");
-
     stream_llm::TensorReader reader{path};
-    stream_llm::BufferPool pool{tensor.size, tensor.size, index.alignment()};
-    auto lease = pool.acquire(tensor.size);
-    reader.read_at(tensor.file_offset, lease.bytes());
+    BackendPtr backend{ggml_backend_cpu_init()};
+    check(backend != nullptr, "failed to initialize reference CPU backend");
+    constexpr std::size_t layer_budget = 64U * 1024U * 1024U;
+    stream_llm::BufferPool pool{layer_budget, layer_budget, ggml_backend_get_alignment(backend.get())};
+    stream_llm::QwenLayerStreamer streamer{index, reader, pool, backend.get()};
+    for (std::size_t layer_index = 0; layer_index < 36; ++layer_index) {
+        const auto mapped = streamer.map(layer_index);
+        check(mapped.tensors().size() == qwen_tensor_roles.size(), "reference layer map is incomplete");
+        check(mapped.size() <= layer_budget, "reference layer exceeds buffer budget");
+    }
+    const auto layout = streamer.map(0);
+    {
+        auto layer = streamer.load(layout);
+        check(pool.available() == 0, "reference layer did not retain its lease");
+        check(ggml_nbytes(layer.tensor("attn_k.weight")) == index.tensor("blk.0.attn_k.weight").size,
+              "reference bound tensor size mismatch");
+    }
+    check(pool.available() == 1, "reference layer lease was not released");
 }
 
 } // namespace
@@ -136,6 +234,7 @@ int main(int argc, char ** argv) {
     try {
         test_buffer_pool();
         test_gguf_and_storage();
+        test_layer_streaming();
         if (argc == 2) test_reference_model(argv[1]);
         if (argc > 2) throw std::runtime_error("runtime-tests accepts at most one GGUF path");
         std::cout << "runtime interface tests passed\n";
