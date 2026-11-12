@@ -1,4 +1,5 @@
 #include "stream_llm/buffer_pool.hpp"
+#include "stream_llm/generator.hpp"
 #include "stream_llm/gguf_index.hpp"
 #include "stream_llm/qwen_executor.hpp"
 #include "stream_llm/qwen_layer.hpp"
@@ -268,6 +269,17 @@ void test_reference_model(const std::filesystem::path & path) {
     logits = executor.decode(9707);
     check(static_cast<std::size_t>(std::max_element(logits.begin(), logits.end()) - logits.begin()) == 358,
           "executor reset did not clear K/V state");
+
+    stream_llm::GreedyGenerator generator{path, layer_budget};
+    const auto zero_result = generator.generate("Hello world", 0);
+    check(zero_result.tokens.empty() && zero_result.text.empty(), "zero-token generation produced output");
+    check(zero_result.stop_reason == stream_llm::GenerationStopReason::maximum_tokens,
+          "zero-token generation reported the wrong stop reason");
+    const auto generated = generator.generate("Hello world", 1);
+    check(generated.tokens == std::vector<std::int32_t>{0}, "greedy generation selected the wrong token");
+    check(generated.text == "!", "generated token was not detokenized");
+    check(generated.stop_reason == stream_llm::GenerationStopReason::maximum_tokens,
+          "maximum-token stop was not reported");
 }
 
 } // namespace

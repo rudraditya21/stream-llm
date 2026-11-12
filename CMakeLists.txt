@@ -36,6 +36,7 @@ add_subdirectory("${STREAM_LLM_LLAMA_CPP_DIR}" "${CMAKE_BINARY_DIR}/llama" EXCLU
 
 add_library(stream_llm_runtime STATIC
     src/buffer_pool.cpp
+    src/generator.cpp
     src/gguf_index.cpp
     src/qwen_executor.cpp
     src/qwen_layer.cpp

@@ -103,7 +103,11 @@ cmake --install build --prefix ./install
   provides tokenization, detokenization, end-of-generation detection, embedded
   chat-template formatting, and formatted-chat tokenization without loading
   model weights through llama.cpp.
+- `GreedyGenerator` resets inference state for each request, evaluates text or
+  chat prompts, selects the highest-logit token, stops before emitting an EOG
+  token, and enforces the caller's maximum-new-token limit.
 
 The optional reference-model test verifies Qwen tokenization and chat formatting,
-then executes all 36 layers and checks two greedy token IDs against the pinned
-llama.cpp reference. The next stage is the CLI generation loop.
+then executes all 36 layers, checks greedy token IDs against the pinned llama.cpp
+reference, and verifies bounded greedy generation. Sampling and CLI integration
+remain later stages.
