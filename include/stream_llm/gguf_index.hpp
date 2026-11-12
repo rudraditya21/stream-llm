@@ -33,6 +33,7 @@ public:
     std::size_t tensor_count() const noexcept;
     std::size_t alignment() const noexcept;
     std::uint64_t data_offset() const noexcept;
+    const TensorInfo * find_tensor(std::string_view name) const noexcept;
     const TensorInfo & tensor(std::string_view name) const;
 
     std::uint32_t u32(std::string_view key) const;

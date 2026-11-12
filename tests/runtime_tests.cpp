@@ -1,5 +1,6 @@
 #include "stream_llm/buffer_pool.hpp"
 #include "stream_llm/gguf_index.hpp"
+#include "stream_llm/qwen_executor.hpp"
 #include "stream_llm/qwen_layer.hpp"
 #include "stream_llm/tensor_reader.hpp"
 
@@ -8,6 +9,7 @@
 #include "ggml.h"
 #include "gguf.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -226,6 +228,23 @@ void test_reference_model(const std::filesystem::path & path) {
               "reference bound tensor size mismatch");
     }
     check(pool.available() == 1, "reference layer lease was not released");
+
+    stream_llm::QwenExecutor executor{path, layer_budget};
+    check_throws([&] { static_cast<void>(executor.decode(-1)); }, "invalid token ID did not fail");
+    check(executor.position() == 0, "failed decode changed executor position");
+    auto logits = executor.decode(9707);
+    check(logits.size() == executor.config().vocabulary_size, "reference logit count mismatch");
+    check(static_cast<std::size_t>(std::max_element(logits.begin(), logits.end()) - logits.begin()) == 358,
+          "reference greedy token mismatch at position 0");
+    logits = executor.decode(1879);
+    check(static_cast<std::size_t>(std::max_element(logits.begin(), logits.end()) - logits.begin()) == 0,
+          "reference greedy token mismatch at position 1");
+    check(executor.position() == 2, "executor position did not advance");
+    executor.reset();
+    check(executor.position() == 0, "executor reset did not clear position");
+    logits = executor.decode(9707);
+    check(static_cast<std::size_t>(std::max_element(logits.begin(), logits.end()) - logits.begin()) == 358,
+          "executor reset did not clear K/V state");
 }
 
 } // namespace

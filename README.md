@@ -5,8 +5,9 @@ Run language models beyond your available memory.
 `stream-llm` is an experimental C++ inference runtime intended to execute GGUF
 language models with explicit, bounded weight residency. The runtime currently
 provides GGUF tensor indexing, positional file reads, aligned bounded buffer
-leases, and streamed Qwen2.5 layer-weight binding. Model execution is not
-implemented yet.
+leases, streamed Qwen2.5 layer-weight binding, and deterministic token-ID
+execution on the CPU backend. Tokenization and text generation are not yet
+connected to the CLI.
 
 ## Requirements
 
@@ -92,6 +93,12 @@ cmake --install build --prefix ./install
 - `BoundLayer` owns the lease and synchronizes its CPU backend before destruction,
   so referenced weight memory cannot return to the pool while backend work is
   outstanding. The backend must outlive every layer bound to it.
+- `QwenExecutor` performs embedding lookup, RMS normalization, Q/K/V projection,
+  NEOX RoPE, grouped-query attention, persistent F16 K/V caching, gated FFN
+  execution, final normalization, and bounded chunked vocabulary projection.
+- `decode(token_id)` returns the complete logit vector and advances the token
+  position. `reset()` clears position and all persistent K/V state.
 
-The next stage is constructing and executing the Qwen2.5 layer graph using these
-bound tensors and persistent KV-cache state.
+The optional reference-model test executes all 36 layers and verifies two greedy
+token IDs against the pinned llama.cpp reference. The next stage is tokenizer,
+chat-template, and CLI generation integration.

@@ -27,6 +27,7 @@ add_subdirectory("${STREAM_LLM_GGML_DIR}" "${CMAKE_BINARY_DIR}/ggml" EXCLUDE_FRO
 add_library(stream_llm_runtime STATIC
     src/buffer_pool.cpp
     src/gguf_index.cpp
+    src/qwen_executor.cpp
     src/qwen_layer.cpp
     src/tensor_reader.cpp
 )

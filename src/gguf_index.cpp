@@ -83,10 +83,15 @@ std::size_t GgufIndex::tensor_count() const noexcept { return impl_->tensors.siz
 std::size_t GgufIndex::alignment() const noexcept { return impl_->alignment; }
 std::uint64_t GgufIndex::data_offset() const noexcept { return impl_->data_offset; }
 
-const TensorInfo & GgufIndex::tensor(std::string_view name) const {
+const TensorInfo * GgufIndex::find_tensor(std::string_view name) const noexcept {
     const auto found = impl_->tensors.find(std::string{name});
-    if (found == impl_->tensors.end()) throw std::runtime_error("missing GGUF tensor: " + std::string{name});
-    return found->second;
+    return found == impl_->tensors.end() ? nullptr : &found->second;
+}
+
+const TensorInfo & GgufIndex::tensor(std::string_view name) const {
+    const auto * found = find_tensor(name);
+    if (!found) throw std::runtime_error("missing GGUF tensor: " + std::string{name});
+    return *found;
 }
 
 std::uint32_t GgufIndex::u32(std::string_view key) const {
