@@ -1,0 +1,11 @@
+# CMake build trees
+/build/
+/build-*/
+
+# Local CMake and editor settings
+CMakeUserPresets.json
+.vscode/
+.idea/
+
+# Platform files
+.DS_Store
