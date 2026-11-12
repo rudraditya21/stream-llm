@@ -3,6 +3,7 @@
 #include "stream_llm/qwen_executor.hpp"
 #include "stream_llm/qwen_layer.hpp"
 #include "stream_llm/tensor_reader.hpp"
+#include "stream_llm/tokenizer.hpp"
 
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
@@ -228,6 +229,28 @@ void test_reference_model(const std::filesystem::path & path) {
               "reference bound tensor size mismatch");
     }
     check(pool.available() == 1, "reference layer lease was not released");
+
+    stream_llm::Tokenizer tokenizer{path};
+    const auto hello_tokens = tokenizer.tokenize("Hello world");
+    check(hello_tokens == std::vector<std::int32_t>({9707, 1879}), "reference tokenization mismatch");
+    check(tokenizer.detokenize(hello_tokens) == "Hello world", "reference detokenization mismatch");
+    check(tokenizer.is_end_of_generation(151645), "Qwen end-of-generation token was not recognized");
+    check(!tokenizer.is_end_of_generation(9707), "normal token was marked as end-of-generation");
+    check(!tokenizer.is_end_of_generation(-1), "invalid token was marked as end-of-generation");
+
+    const std::vector<stream_llm::ChatMessage> messages{
+        {"system", "You are helpful."},
+        {"user", "Hello"},
+    };
+    const auto prompt = tokenizer.apply_chat_template(messages, true);
+    check(prompt.find("<|im_start|>system\nYou are helpful.<|im_end|>") != std::string::npos,
+          "system message was not formatted by the Qwen chat template");
+    check(prompt.ends_with("<|im_start|>assistant\n"), "assistant generation prompt is missing");
+    const auto prompt_tokens = tokenizer.tokenize_chat(messages, true);
+    check(tokenizer.detokenize(prompt_tokens) == prompt, "chat prompt token round trip mismatch");
+    const std::vector<stream_llm::ChatMessage> invalid_messages{{"user", std::string{"x\0y", 3}}};
+    check_throws([&] { static_cast<void>(tokenizer.apply_chat_template(invalid_messages)); },
+                 "embedded null chat content did not fail");
 
     stream_llm::QwenExecutor executor{path, layer_budget};
     check_throws([&] { static_cast<void>(executor.decode(-1)); }, "invalid token ID did not fail");

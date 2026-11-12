@@ -6,8 +6,9 @@ Run language models beyond your available memory.
 language models with explicit, bounded weight residency. The runtime currently
 provides GGUF tensor indexing, positional file reads, aligned bounded buffer
 leases, streamed Qwen2.5 layer-weight binding, and deterministic token-ID
-execution on the CPU backend. Tokenization and text generation are not yet
-connected to the CLI.
+execution on the CPU backend. Qwen tokenization and chat-template formatting are
+available through the runtime API; text generation is not yet connected to the
+CLI.
 
 ## Requirements
 
@@ -23,7 +24,7 @@ portable for future Linux and Windows support.
 
 The workspace layout used during development places the pinned llama.cpp checkout
 at `../upstream/llama.cpp`, which CMake detects automatically. For another layout,
-pass its `ggml` directory explicitly:
+pass the llama.cpp root explicitly:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -33,7 +34,7 @@ cmake --build build
 ```sh
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
-  -DSTREAM_LLM_GGML_DIR=/path/to/llama.cpp/ggml
+  -DSTREAM_LLM_LLAMA_CPP_DIR=/path/to/llama.cpp
 cmake --build build
 ```
 
@@ -98,7 +99,11 @@ cmake --install build --prefix ./install
   execution, final normalization, and bounded chunked vocabulary projection.
 - `decode(token_id)` returns the complete logit vector and advances the token
   position. `reset()` clears position and all persistent K/V state.
+- `Tokenizer` loads only vocabulary metadata through llama.cpp's public API. It
+  provides tokenization, detokenization, end-of-generation detection, embedded
+  chat-template formatting, and formatted-chat tokenization without loading
+  model weights through llama.cpp.
 
-The optional reference-model test executes all 36 layers and verifies two greedy
-token IDs against the pinned llama.cpp reference. The next stage is tokenizer,
-chat-template, and CLI generation integration.
+The optional reference-model test verifies Qwen tokenization and chat formatting,
+then executes all 36 layers and checks two greedy token IDs against the pinned
+llama.cpp reference. The next stage is the CLI generation loop.

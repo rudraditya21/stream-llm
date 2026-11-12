@@ -8,21 +8,31 @@ project(
 )
 
 set(STREAM_LLM_GGML_DIR "" CACHE PATH "Path to the pinned llama.cpp/ggml source directory")
-if(NOT STREAM_LLM_GGML_DIR)
-    get_filename_component(STREAM_LLM_GGML_CANDIDATE "${CMAKE_CURRENT_SOURCE_DIR}/../upstream/llama.cpp/ggml" ABSOLUTE)
-    if(EXISTS "${STREAM_LLM_GGML_CANDIDATE}/CMakeLists.txt")
-        set(STREAM_LLM_GGML_DIR "${STREAM_LLM_GGML_CANDIDATE}")
+set(STREAM_LLM_LLAMA_CPP_DIR "" CACHE PATH "Path to the pinned llama.cpp source directory")
+if(NOT STREAM_LLM_LLAMA_CPP_DIR)
+    if(STREAM_LLM_GGML_DIR)
+        get_filename_component(STREAM_LLM_LLAMA_CPP_DIR "${STREAM_LLM_GGML_DIR}/.." ABSOLUTE)
+    else()
+        get_filename_component(STREAM_LLM_LLAMA_CPP_CANDIDATE "${CMAKE_CURRENT_SOURCE_DIR}/../upstream/llama.cpp" ABSOLUTE)
+        if(EXISTS "${STREAM_LLM_LLAMA_CPP_CANDIDATE}/CMakeLists.txt")
+            set(STREAM_LLM_LLAMA_CPP_DIR "${STREAM_LLM_LLAMA_CPP_CANDIDATE}")
+        endif()
     endif()
 endif()
-if(NOT EXISTS "${STREAM_LLM_GGML_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR "Set STREAM_LLM_GGML_DIR to the pinned llama.cpp/ggml directory")
+if(NOT EXISTS "${STREAM_LLM_LLAMA_CPP_DIR}/include/llama.h")
+    message(FATAL_ERROR "Set STREAM_LLM_LLAMA_CPP_DIR to the pinned llama.cpp directory")
 endif()
 
 set(GGML_METAL OFF CACHE BOOL "" FORCE)
 set(GGML_BLAS OFF CACHE BOOL "" FORCE)
 set(GGML_ACCELERATE OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-add_subdirectory("${STREAM_LLM_GGML_DIR}" "${CMAKE_BINARY_DIR}/ggml" EXCLUDE_FROM_ALL)
+set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+add_subdirectory("${STREAM_LLM_LLAMA_CPP_DIR}" "${CMAKE_BINARY_DIR}/llama" EXCLUDE_FROM_ALL)
 
 add_library(stream_llm_runtime STATIC
     src/buffer_pool.cpp
@@ -30,10 +40,11 @@ add_library(stream_llm_runtime STATIC
     src/qwen_executor.cpp
     src/qwen_layer.cpp
     src/tensor_reader.cpp
+    src/tokenizer.cpp
 )
 target_include_directories(stream_llm_runtime PUBLIC include)
 target_compile_features(stream_llm_runtime PUBLIC cxx_std_20)
-target_link_libraries(stream_llm_runtime PUBLIC ggml)
+target_link_libraries(stream_llm_runtime PUBLIC llama)
 
 add_executable(stream-llm src/main.cpp)
 target_link_libraries(stream-llm PRIVATE stream_llm_runtime)
