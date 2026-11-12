@@ -63,8 +63,13 @@ stream_llm_enable_warnings(stream-llm)
 
 include(CTest)
 if(BUILD_TESTING)
-    add_test(NAME cli.runs COMMAND stream-llm)
-    set_tests_properties(cli.runs PROPERTIES PASS_REGULAR_EXPRESSION "stream-llm")
+    add_test(NAME cli.help COMMAND stream-llm --help)
+    set_tests_properties(cli.help PROPERTIES PASS_REGULAR_EXPRESSION "Usage: stream-llm")
+    add_test(NAME cli.missing_arguments COMMAND stream-llm)
+    set_tests_properties(cli.missing_arguments PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME cli.invalid_max_tokens
+        COMMAND stream-llm --model unused.gguf --prompt test --max-tokens invalid)
+    set_tests_properties(cli.invalid_max_tokens PROPERTIES WILL_FAIL TRUE)
 
     add_executable(runtime-tests tests/runtime_tests.cpp)
     target_link_libraries(runtime-tests PRIVATE stream_llm_runtime)
@@ -74,6 +79,12 @@ if(BUILD_TESTING)
     set(STREAM_LLM_TEST_MODEL "" CACHE FILEPATH "Optional GGUF used by the model index smoke test")
     if(STREAM_LLM_TEST_MODEL)
         add_test(NAME runtime.reference_model COMMAND runtime-tests "${STREAM_LLM_TEST_MODEL}")
+        add_test(NAME cli.reference_model COMMAND stream-llm
+            --model "${STREAM_LLM_TEST_MODEL}"
+            --prompt "Hello world"
+            --max-tokens 1
+        )
+        set_tests_properties(cli.reference_model PROPERTIES PASS_REGULAR_EXPRESSION "!")
     endif()
 endif()
 

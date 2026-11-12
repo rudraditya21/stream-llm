@@ -7,8 +7,8 @@ language models with explicit, bounded weight residency. The runtime currently
 provides GGUF tensor indexing, positional file reads, aligned bounded buffer
 leases, streamed Qwen2.5 layer-weight binding, and deterministic token-ID
 execution on the CPU backend. Qwen tokenization and chat-template formatting are
-available through the runtime API; text generation is not yet connected to the
-CLI.
+available through the runtime API and the CLI supports deterministic greedy text
+generation.
 
 ## Requirements
 
@@ -48,7 +48,16 @@ cmake --build build
 ## Run
 
 ```sh
-./build/stream-llm
+./build/stream-llm \
+  --model /path/to/model.gguf \
+  --prompt "Hello world" \
+  --max-tokens 32
+```
+
+Show the available options without loading a model:
+
+```sh
+./build/stream-llm --help
 ```
 
 ## Test
@@ -75,7 +84,7 @@ Choose an install prefix and install the executable:
 
 ```sh
 cmake --install build --prefix ./install
-./install/bin/stream-llm
+./install/bin/stream-llm --help
 ```
 
 ## Runtime foundations
@@ -109,5 +118,5 @@ cmake --install build --prefix ./install
 
 The optional reference-model test verifies Qwen tokenization and chat formatting,
 then executes all 36 layers, checks greedy token IDs against the pinned llama.cpp
-reference, and verifies bounded greedy generation. Sampling and CLI integration
-remain later stages.
+reference, and verifies bounded greedy generation through both the runtime API
+and CLI. Incremental output and sampling remain later stages.
