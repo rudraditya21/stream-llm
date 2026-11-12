@@ -100,38 +100,3 @@ Choose an install prefix and install the executable:
 cmake --install build --prefix ./install
 ./install/bin/stream-llm --help
 ```
-
-## Runtime foundations
-
-- `GgufIndex` parses metadata and creates a validated tensor byte-range index
-  without loading tensor payloads.
-- `TensorReader` performs bounded positional reads, so concurrent callers do not
-  share or mutate a file cursor.
-- `BufferPool` enforces a fixed allocation budget and returns move-only leases.
-  A buffer cannot be reacquired until its lease is destroyed or moved over.
-- A lease keeps its backing pool state alive. Backend work must be synchronized
-  before releasing the lease that owns referenced weight bytes.
-- `QwenLayerStreamer` maps the 12 tensors required by each dense Qwen2.5 layer,
-  packs their byte ranges into one lease, and binds that external memory to ggml
-  tensor descriptors.
-- `BoundLayer` owns the lease and synchronizes its CPU backend before destruction,
-  so referenced weight memory cannot return to the pool while backend work is
-  outstanding. The backend must outlive every layer bound to it.
-- `QwenExecutor` performs embedding lookup, RMS normalization, Q/K/V projection,
-  NEOX RoPE, grouped-query attention, persistent F16 K/V caching, gated FFN
-  execution, final normalization, and bounded chunked vocabulary projection.
-- `decode(token_id)` returns the complete logit vector and advances the token
-  position. `reset()` clears position and all persistent K/V state.
-- `Tokenizer` loads only vocabulary metadata through llama.cpp's public API. It
-  provides tokenization, detokenization, end-of-generation detection, embedded
-  chat-template formatting, and formatted-chat tokenization without loading
-  model weights through llama.cpp.
-- `GreedyGenerator` resets inference state for each request, evaluates text or
-  chat prompts, selects the highest-logit token, stops before emitting an EOG
-  token, enforces the caller's maximum-new-token limit, and can invoke a callback
-  for each generated text piece.
-
-The optional reference-model test verifies Qwen tokenization and chat formatting,
-then executes all 36 layers, checks greedy token IDs against the pinned llama.cpp
-reference, and verifies bounded greedy generation through both the runtime API
-and raw and chat-oriented CLI paths. Sampling remains a later stage.
