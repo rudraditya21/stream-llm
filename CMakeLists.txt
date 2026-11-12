@@ -79,6 +79,10 @@ if(BUILD_TESTING)
     stream_llm_enable_warnings(runtime-tests)
     add_test(NAME runtime.interfaces COMMAND runtime-tests)
 
+    add_executable(parity-trace tests/parity_trace.cpp)
+    target_link_libraries(parity-trace PRIVATE stream_llm_runtime)
+    stream_llm_enable_warnings(parity-trace)
+
     set(STREAM_LLM_TEST_MODEL "" CACHE FILEPATH "Optional GGUF used by the model index smoke test")
     if(STREAM_LLM_TEST_MODEL)
         add_test(NAME runtime.reference_model COMMAND runtime-tests "${STREAM_LLM_TEST_MODEL}")
