@@ -40,6 +40,11 @@ using BackendBufferPtr = std::unique_ptr<ggml_backend_buffer, BackendBufferDel>;
 
 [[noreturn]] void fail(const std::string & message) { throw std::runtime_error(message); }
 
+void emit(const QwenTraceCallback & trace, std::string_view name, std::int32_t layer,
+          const std::vector<float> & values) {
+    if (trace) trace(name, layer, values);
+}
+
 BackendPtr make_backend() {
     BackendPtr backend{ggml_backend_cpu_init()};
     if (!backend) fail("failed to initialize CPU backend");
@@ -196,13 +201,15 @@ void validate_layer(const QwenLayerLayout & layout, const QwenConfig & config) {
 }
 
 struct Projection {
+    std::vector<float> normalized;
     std::vector<float> query;
     std::vector<float> key;
     std::vector<float> value;
 };
 
 Projection project(const BoundLayer & layer, const QwenConfig & config,
-                   const std::vector<float> & hidden, ggml_backend_t backend) {
+                   const std::vector<float> & hidden, ggml_backend_t backend,
+                   std::int32_t layer_index, const QwenTraceCallback & trace) {
     auto context = make_context();
     auto * input = ggml_new_tensor_1d(context.get(), GGML_TYPE_F32, config.embedding_length);
     auto * norm = ggml_rms_norm(context.get(), input, config.rms_epsilon);
@@ -221,7 +228,12 @@ Projection project(const BoundLayer & layer, const QwenConfig & config,
     if (!buffer) fail("failed to allocate Q/K/V graph");
     set_tensor(input, hidden.data(), hidden.size() * sizeof(float));
     if (ggml_backend_graph_compute(backend, graph) != GGML_STATUS_SUCCESS) fail("Q/K/V projection failed");
-    return {read_f32(query), read_f32(key), read_f32(value)};
+    Projection result{read_f32(norm), read_f32(query), read_f32(key), read_f32(value)};
+    emit(trace, "attn_norm", layer_index, result.normalized);
+    emit(trace, "Qcur_pre", layer_index, result.query);
+    emit(trace, "Kcur_pre", layer_index, result.key);
+    emit(trace, "Vcur", layer_index, result.value);
+    return result;
 }
 
 void apply_rope(std::vector<float> & values, std::size_t heads, std::size_t head_dimension,
@@ -267,10 +279,23 @@ struct LayerCache {
         values.resize(token_count * width);
         tokens = token_count;
     }
+
+    std::vector<float> key_values() const {
+        std::vector<float> result(keys.size());
+        ggml_fp16_to_fp32_row(keys.data(), result.data(), static_cast<std::int64_t>(keys.size()));
+        return result;
+    }
+
+    std::vector<float> value_values() const {
+        std::vector<float> result(values.size());
+        ggml_fp16_to_fp32_row(values.data(), result.data(), static_cast<std::int64_t>(values.size()));
+        return result;
+    }
 };
 
 std::vector<float> attend(const std::vector<float> & query, const LayerCache & cache,
-                          const QwenConfig & config) {
+                          const QwenConfig & config, std::int32_t layer_index,
+                          const QwenTraceCallback & trace) {
     if (cache.tokens == 0 || query.size() != config.embedding_length) fail("invalid attention state");
     const std::size_t kv_width = config.kv_head_count * config.head_dimension;
     if (cache.keys.size() != cache.tokens * kv_width || cache.values.size() != cache.keys.size()) {
@@ -280,6 +305,12 @@ std::vector<float> attend(const std::vector<float> & query, const LayerCache & c
     const float scale = 1.0F / std::sqrt(static_cast<float>(config.head_dimension));
     std::vector<float> output(config.embedding_length, 0.0F);
     std::vector<float> scores(cache.tokens);
+    std::vector<float> raw_scores;
+    std::vector<float> probabilities;
+    if (trace) {
+        raw_scores.resize(config.head_count * cache.tokens);
+        probabilities.resize(raw_scores.size());
+    }
 
     for (std::size_t query_head = 0; query_head < config.head_count; ++query_head) {
         const std::size_t kv_head = query_head / group_size;
@@ -290,6 +321,7 @@ std::vector<float> attend(const std::vector<float> & query, const LayerCache & c
             for (std::size_t dimension = 0; dimension < config.head_dimension; ++dimension) {
                 dot += query[query_base + dimension] * ggml_fp16_to_fp32(cache.keys[cache_base + dimension]);
             }
+            if (trace) raw_scores[query_head * cache.tokens + token] = dot;
             scores[token] = dot * scale;
         }
         const float maximum = *std::max_element(scores.begin(), scores.end());
@@ -300,6 +332,7 @@ std::vector<float> attend(const std::vector<float> & query, const LayerCache & c
         }
         for (std::size_t token = 0; token < cache.tokens; ++token) {
             const float probability = scores[token] / denominator;
+            if (trace) probabilities[query_head * cache.tokens + token] = probability;
             const std::size_t cache_base = token * kv_width + kv_head * config.head_dimension;
             const std::size_t output_base = query_head * config.head_dimension;
             for (std::size_t dimension = 0; dimension < config.head_dimension; ++dimension) {
@@ -308,13 +341,16 @@ std::vector<float> attend(const std::vector<float> & query, const LayerCache & c
             }
         }
     }
+    emit(trace, "kq", layer_index, raw_scores);
+    emit(trace, "kq_soft_max", layer_index, probabilities);
     return output;
 }
 
 std::vector<float> finish_layer(const BoundLayer & layer, const QwenConfig & config,
                                 const std::vector<float> & hidden,
                                 const std::vector<float> & attention,
-                                ggml_backend_t backend) {
+                                ggml_backend_t backend, std::int32_t layer_index,
+                                const QwenTraceCallback & trace) {
     auto context = make_context();
     auto * hidden_input = ggml_new_tensor_1d(context.get(), GGML_TYPE_F32, config.embedding_length);
     auto * attention_input = ggml_new_tensor_1d(context.get(), GGML_TYPE_F32, config.embedding_length);
@@ -334,7 +370,18 @@ std::vector<float> finish_layer(const BoundLayer & layer, const QwenConfig & con
     set_tensor(hidden_input, hidden.data(), hidden.size() * sizeof(float));
     set_tensor(attention_input, attention.data(), attention.size() * sizeof(float));
     if (ggml_backend_graph_compute(backend, graph) != GGML_STATUS_SUCCESS) fail("layer graph failed");
-    return read_f32(output);
+    auto result = read_f32(output);
+    if (trace) {
+        emit(trace, "attn_projected", layer_index, read_f32(projected));
+        emit(trace, "ffn_inp", layer_index, read_f32(residual));
+        emit(trace, "ffn_norm", layer_index, read_f32(norm));
+        emit(trace, "ffn_gate", layer_index, read_f32(gate));
+        emit(trace, "ffn_up", layer_index, read_f32(up));
+        emit(trace, "ffn_swiglu", layer_index, read_f32(activated));
+        emit(trace, "ffn_out", layer_index, read_f32(down));
+        emit(trace, "l_out", layer_index, result);
+    }
+    return result;
 }
 
 } // namespace
@@ -463,6 +510,10 @@ const QwenConfig & QwenExecutor::config() const noexcept { return impl_->config;
 std::size_t QwenExecutor::position() const noexcept { return impl_->position; }
 
 std::vector<float> QwenExecutor::decode(std::int32_t token) {
+    return decode(token, {});
+}
+
+std::vector<float> QwenExecutor::decode(std::int32_t token, const QwenTraceCallback & trace) {
     const std::size_t previous_position = impl_->position;
     const std::size_t kv_width = impl_->config.kv_head_count * impl_->config.head_dimension;
     if (!std::all_of(impl_->caches.begin(), impl_->caches.end(),
@@ -471,20 +522,33 @@ std::vector<float> QwenExecutor::decode(std::int32_t token) {
     }
     try {
         auto hidden = impl_->embedding(token);
+        emit(trace, "embd", -1, hidden);
         for (std::size_t layer_index = 0; layer_index < impl_->config.layer_count; ++layer_index) {
             const auto layout = impl_->streamer.map(layer_index);
             auto layer = impl_->streamer.load(layout);
-            auto projection = project(layer, impl_->config, hidden, impl_->backend.get());
+            const auto trace_layer = static_cast<std::int32_t>(layer_index);
+            auto projection = project(layer, impl_->config, hidden, impl_->backend.get(), trace_layer, trace);
             apply_rope(projection.query, impl_->config.head_count, impl_->config.head_dimension,
                        impl_->position, impl_->config.rope_base);
             apply_rope(projection.key, impl_->config.kv_head_count, impl_->config.head_dimension,
                        impl_->position, impl_->config.rope_base);
+            emit(trace, "Qcur", trace_layer, projection.query);
+            emit(trace, "Kcur", trace_layer, projection.key);
             impl_->caches[layer_index].append(projection.key, projection.value);
-            const auto attention = attend(projection.query, impl_->caches[layer_index], impl_->config);
-            hidden = finish_layer(layer, impl_->config, hidden, attention, impl_->backend.get());
+            if (trace) {
+                emit(trace, "cache_k", trace_layer, impl_->caches[layer_index].key_values());
+                emit(trace, "cache_v", trace_layer, impl_->caches[layer_index].value_values());
+            }
+            const auto attention = attend(projection.query, impl_->caches[layer_index], impl_->config,
+                                          trace_layer, trace);
+            emit(trace, "kqv_out", trace_layer, attention);
+            hidden = finish_layer(layer, impl_->config, hidden, attention, impl_->backend.get(),
+                                  trace_layer, trace);
         }
         const auto normalized = impl_->normalize(hidden);
+        emit(trace, "result_norm", -1, normalized);
         auto result = impl_->logits(normalized);
+        emit(trace, "result_output", -1, result);
         ++impl_->position;
         return result;
     } catch (...) {

@@ -3,7 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
+#include <span>
+#include <string_view>
 #include <vector>
 
 namespace stream_llm {
@@ -20,6 +23,10 @@ struct QwenConfig {
     float rope_base;
 };
 
+using QwenTraceCallback = std::function<void(std::string_view name,
+                                             std::int32_t layer,
+                                             std::span<const float> values)>;
+
 class QwenExecutor {
 public:
     explicit QwenExecutor(const std::filesystem::path & model_path,
@@ -34,6 +41,7 @@ public:
     const QwenConfig & config() const noexcept;
     std::size_t position() const noexcept;
     std::vector<float> decode(std::int32_t token);
+    std::vector<float> decode(std::int32_t token, const QwenTraceCallback & trace);
     void reset();
 
 private:
