@@ -10,16 +10,19 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
 constexpr std::string_view usage =
-    "Usage: stream-llm --model PATH --prompt TEXT --max-tokens COUNT\n";
+    "Usage: stream-llm --model PATH --prompt TEXT --max-tokens COUNT [--chat [--system TEXT]]\n";
 
 struct Options {
     std::filesystem::path model;
     std::string prompt;
     std::size_t max_tokens = 0;
+    bool chat = false;
+    std::optional<std::string> system;
 };
 
 void discard_dependency_log(ggml_log_level, const char *, void *) {}
@@ -33,6 +36,8 @@ Options parse_options(int argc, char ** argv) {
     std::optional<std::filesystem::path> model;
     std::optional<std::string> prompt;
     std::optional<std::size_t> max_tokens;
+    std::optional<std::string> system;
+    bool chat = false;
 
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -51,6 +56,12 @@ Options parse_options(int argc, char ** argv) {
                 throw std::invalid_argument("--max-tokens must be a positive integer");
             }
             max_tokens = parsed;
+        } else if (argument == "--chat") {
+            if (chat) throw std::invalid_argument("--chat cannot be repeated");
+            chat = true;
+        } else if (argument == "--system") {
+            if (system) throw std::invalid_argument("--system cannot be repeated");
+            system = option_value(index, argc, argv, argument);
         } else {
             throw std::invalid_argument("unknown option: " + std::string{argument});
         }
@@ -60,10 +71,11 @@ Options parse_options(int argc, char ** argv) {
         throw std::invalid_argument("--model, --prompt, and --max-tokens are required");
     }
     if (prompt->empty()) throw std::invalid_argument("--prompt cannot be empty");
+    if (system && !chat) throw std::invalid_argument("--system requires --chat");
     if (!std::filesystem::is_regular_file(*model)) {
         throw std::invalid_argument("--model must name an existing file");
     }
-    return {*model, *prompt, *max_tokens};
+    return {*model, *prompt, *max_tokens, chat, system};
 }
 
 } // namespace
@@ -78,9 +90,17 @@ int main(int argc, char ** argv) {
         const auto options = parse_options(argc, argv);
         llama_log_set(discard_dependency_log, nullptr);
         stream_llm::GreedyGenerator generator{options.model};
-        static_cast<void>(generator.generate(options.prompt, options.max_tokens, [](std::string_view piece) {
+        const auto stream_piece = [](std::string_view piece) {
             std::cout << piece << std::flush;
-        }));
+        };
+        if (options.chat) {
+            std::vector<stream_llm::ChatMessage> messages;
+            if (options.system) messages.push_back({"system", *options.system});
+            messages.push_back({"user", options.prompt});
+            static_cast<void>(generator.generate_chat(messages, options.max_tokens, stream_piece));
+        } else {
+            static_cast<void>(generator.generate(options.prompt, options.max_tokens, stream_piece));
+        }
         std::cout << '\n';
         return 0;
     } catch (const std::exception & error) {

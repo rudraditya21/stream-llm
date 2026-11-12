@@ -54,6 +54,20 @@ cmake --build build
   --max-tokens 32
 ```
 
+Apply the model's embedded chat template for instruction-style prompts:
+
+```sh
+./build/stream-llm \
+  --model /path/to/model.gguf \
+  --chat \
+  --system "You are a helpful assistant." \
+  --prompt "What is the capital of France?" \
+  --max-tokens 32
+```
+
+`--system` is optional and is valid only with `--chat`. Without `--chat`, the
+prompt is passed to the tokenizer unchanged.
+
 Show the available options without loading a model:
 
 ```sh
@@ -120,4 +134,4 @@ cmake --install build --prefix ./install
 The optional reference-model test verifies Qwen tokenization and chat formatting,
 then executes all 36 layers, checks greedy token IDs against the pinned llama.cpp
 reference, and verifies bounded greedy generation through both the runtime API
-and CLI. Chat-oriented CLI input and sampling remain later stages.
+and raw and chat-oriented CLI paths. Sampling remains a later stage.

@@ -70,6 +70,9 @@ if(BUILD_TESTING)
     add_test(NAME cli.invalid_max_tokens
         COMMAND stream-llm --model unused.gguf --prompt test --max-tokens invalid)
     set_tests_properties(cli.invalid_max_tokens PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME cli.system_requires_chat
+        COMMAND stream-llm --model unused.gguf --prompt test --max-tokens 1 --system test)
+    set_tests_properties(cli.system_requires_chat PROPERTIES WILL_FAIL TRUE)
 
     add_executable(runtime-tests tests/runtime_tests.cpp)
     target_link_libraries(runtime-tests PRIVATE stream_llm_runtime)
@@ -85,6 +88,12 @@ if(BUILD_TESTING)
             --max-tokens 1
         )
         set_tests_properties(cli.reference_model PROPERTIES PASS_REGULAR_EXPRESSION "!")
+        add_test(NAME cli.reference_chat COMMAND stream-llm
+            --model "${STREAM_LLM_TEST_MODEL}"
+            --chat
+            --prompt "x"
+            --max-tokens 1
+        )
     endif()
 endif()
 
