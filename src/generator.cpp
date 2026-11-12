@@ -38,17 +38,21 @@ GreedyGenerator::~GreedyGenerator() = default;
 GreedyGenerator::GreedyGenerator(GreedyGenerator &&) noexcept = default;
 GreedyGenerator & GreedyGenerator::operator=(GreedyGenerator &&) noexcept = default;
 
-GenerationResult GreedyGenerator::generate(std::string_view prompt, std::size_t max_new_tokens) {
-    return generate_formatted(prompt, max_new_tokens);
+GenerationResult GreedyGenerator::generate(std::string_view prompt, std::size_t max_new_tokens,
+                                           TokenCallback on_token) {
+    return generate_formatted(prompt, max_new_tokens, on_token);
 }
 
 GenerationResult GreedyGenerator::generate_chat(std::span<const ChatMessage> messages,
-                                                 std::size_t max_new_tokens) {
-    return generate_formatted(impl_->tokenizer.apply_chat_template(messages, true), max_new_tokens);
+                                                 std::size_t max_new_tokens,
+                                                 TokenCallback on_token) {
+    return generate_formatted(impl_->tokenizer.apply_chat_template(messages, true),
+                              max_new_tokens, on_token);
 }
 
 GenerationResult GreedyGenerator::generate_formatted(std::string_view prompt,
-                                                      std::size_t max_new_tokens) {
+                                                      std::size_t max_new_tokens,
+                                                      const TokenCallback & on_token) {
     impl_->executor.reset();
     GenerationResult result{{}, {}, GenerationStopReason::maximum_tokens};
     if (max_new_tokens == 0) return result;
@@ -67,9 +71,12 @@ GenerationResult GreedyGenerator::generate_formatted(std::string_view prompt,
             break;
         }
         result.tokens.push_back(token);
+        const auto piece = impl_->tokenizer.detokenize(
+            std::span<const std::int32_t>{&result.tokens.back(), 1}, false, false);
+        result.text += piece;
+        if (on_token) on_token(piece);
         if (count + 1 < max_new_tokens) logits = impl_->executor.decode(token);
     }
-    result.text = impl_->tokenizer.detokenize(result.tokens, false, false);
     return result;
 }
 

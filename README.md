@@ -8,7 +8,7 @@ provides GGUF tensor indexing, positional file reads, aligned bounded buffer
 leases, streamed Qwen2.5 layer-weight binding, and deterministic token-ID
 execution on the CPU backend. Qwen tokenization and chat-template formatting are
 available through the runtime API and the CLI supports deterministic greedy text
-generation.
+generation with incremental token output.
 
 ## Requirements
 
@@ -114,9 +114,10 @@ cmake --install build --prefix ./install
   model weights through llama.cpp.
 - `GreedyGenerator` resets inference state for each request, evaluates text or
   chat prompts, selects the highest-logit token, stops before emitting an EOG
-  token, and enforces the caller's maximum-new-token limit.
+  token, enforces the caller's maximum-new-token limit, and can invoke a callback
+  for each generated text piece.
 
 The optional reference-model test verifies Qwen tokenization and chat formatting,
 then executes all 36 layers, checks greedy token IDs against the pinned llama.cpp
 reference, and verifies bounded greedy generation through both the runtime API
-and CLI. Incremental output and sampling remain later stages.
+and CLI. Chat-oriented CLI input and sampling remain later stages.

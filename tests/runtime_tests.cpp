@@ -275,9 +275,21 @@ void test_reference_model(const std::filesystem::path & path) {
     check(zero_result.tokens.empty() && zero_result.text.empty(), "zero-token generation produced output");
     check(zero_result.stop_reason == stream_llm::GenerationStopReason::maximum_tokens,
           "zero-token generation reported the wrong stop reason");
-    const auto generated = generator.generate("Hello world", 1);
-    check(generated.tokens == std::vector<std::int32_t>{0}, "greedy generation selected the wrong token");
-    check(generated.text == "!", "generated token was not detokenized");
+    std::vector<std::string> streamed_pieces;
+    const auto generated = generator.generate("Hello world", 2, [&](std::string_view piece) {
+        streamed_pieces.emplace_back(piece);
+    });
+    check(!generated.tokens.empty() && generated.tokens.front() == 0,
+          "greedy generation selected the wrong first token");
+    check(streamed_pieces.size() == generated.tokens.size(), "generation callback count mismatch");
+    std::string streamed_text;
+    for (std::size_t index = 0; index < streamed_pieces.size(); ++index) {
+        const auto expected = tokenizer.detokenize(
+            std::span<const std::int32_t>{&generated.tokens[index], 1}, false, false);
+        check(streamed_pieces[index] == expected, "generation callback order mismatch");
+        streamed_text += streamed_pieces[index];
+    }
+    check(streamed_text == generated.text, "streamed pieces differ from the generation result");
     check(generated.stop_reason == stream_llm::GenerationStopReason::maximum_tokens,
           "maximum-token stop was not reported");
 }

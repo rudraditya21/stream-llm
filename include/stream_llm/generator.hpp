@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -12,6 +13,8 @@
 #include <vector>
 
 namespace stream_llm {
+
+using TokenCallback = std::function<void(std::string_view)>;
 
 enum class GenerationStopReason {
     end_of_generation,
@@ -35,12 +38,15 @@ public:
     GreedyGenerator(GreedyGenerator &&) noexcept;
     GreedyGenerator & operator=(GreedyGenerator &&) noexcept;
 
-    GenerationResult generate(std::string_view prompt, std::size_t max_new_tokens);
+    GenerationResult generate(std::string_view prompt, std::size_t max_new_tokens,
+                              TokenCallback on_token = {});
     GenerationResult generate_chat(std::span<const ChatMessage> messages,
-                                   std::size_t max_new_tokens);
+                                   std::size_t max_new_tokens,
+                                   TokenCallback on_token = {});
 
 private:
-    GenerationResult generate_formatted(std::string_view prompt, std::size_t max_new_tokens);
+    GenerationResult generate_formatted(std::string_view prompt, std::size_t max_new_tokens,
+                                        const TokenCallback & on_token);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

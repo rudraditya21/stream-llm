@@ -78,8 +78,10 @@ int main(int argc, char ** argv) {
         const auto options = parse_options(argc, argv);
         llama_log_set(discard_dependency_log, nullptr);
         stream_llm::GreedyGenerator generator{options.model};
-        const auto result = generator.generate(options.prompt, options.max_tokens);
-        std::cout << result.text << '\n';
+        static_cast<void>(generator.generate(options.prompt, options.max_tokens, [](std::string_view piece) {
+            std::cout << piece << std::flush;
+        }));
+        std::cout << '\n';
         return 0;
     } catch (const std::exception & error) {
         std::cerr << "stream-llm: " << error.what() << '\n' << usage;
